@@ -1,0 +1,2209 @@
+{
+  "name": "Job-Find",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://remoteok.io/api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3568,
+        352
+      ],
+      "id": "e1939a35-6842-48e4-877d-704bd667086d",
+      "name": "Fetch RemoteOK Jobs",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const job = item.json;\n\n  const location = job.location || '';\n  const pay = job.salary || job.compensation || 'N/A';\n\n  const jobTitle = $('Job Search Webhook').first().json.body.jobTitle || '';\n\n  // Generic role words (\"developer\", \"engineer\", ...) match almost every posting —\n  // require the more specific technical/skill words (e.g. \"php\", \"laravel\") instead,\n  // falling back to all words only if nothing specific remains.\n  const GENERIC_WORDS = new Set(['developer', 'engineer', 'programmer', 'specialist', 'senior', 'junior', 'lead', 'software', 'full', 'stack', 'fullstack', 'api', 'backend', 'back-end', 'web']);\n  const allTitleWords = jobTitle.split(/\\s+/).filter(Boolean);\n  const specificWords = allTitleWords.filter(w => !GENERIC_WORDS.has(w.toLowerCase()));\n  const titleWords = (specificWords.length ? specificWords : allTitleWords).map(w => w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'));\n  const relevantTitles = titleWords.length\n    ? [new RegExp(titleWords.join('|'), 'i')]\n    : [/./];\n\n  const isMatch = relevantTitles.some(regex => regex.test(job.title || job.position || ''));\n\n  const postDate = new Date(job.date);\n  const hoursSincePost = (Date.now() - postDate) / 1000 / 60 / 60;\n  const isRecent = hoursSincePost <= 24;\n\n  if (!isMatch || !isRecent) return null;\n\n  return {\n    json: {\n      title: job.title || job.position || '',\n      company: job.company,\n      description: job.description,\n      link: job.url,\n      location: location,\n      date: job.date,\n      pay: pay,\n    }\n  };\n}).filter(item => item !== null);\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3344,
+        352
+      ],
+      "id": "5180ea3a-6d05-4162-8076-353caf46c83a",
+      "name": "Filter Relevant Jobs",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "resume",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -4688,
+        1344
+      ],
+      "id": "6cb4e88d-a8d0-46e7-a908-ed79a35db422",
+      "name": "Extract Text"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const rawOutput = item.json.output;\n  let parsedJson;\n\n  try {\n    // Step 1: Clean AI output by stripping ```json ... ```\n    const cleaned = rawOutput\n      .replace(/^```json\\s*/i, '') // Remove leading ```json\n      .replace(/```$/, '')         // Remove trailing ```\n\n    // Step 2: Attempt to parse cleaned string\n    parsedJson = JSON.parse(cleaned);\n  } catch (error) {\n    // If parsing fails, fallback to logging format\n    console.error(\"Failed to parse AI JSON output. Error:\", error.message);\n    console.error(\"Problematic Raw Output:\", rawOutput);\n\n    parsedJson = {\n      error: \"Invalid JSON from AI\",\n      raw_ai_output: rawOutput,\n      title: item.json.title || \"N/A\",\n      company: item.json.company || \"N/A\",\n      link: item.json.link || \"N/A\"\n    };\n  }\n\n  // Format current date as MM/DD/YYYY\n  const now = new Date();\n  const mmddyyyy = `${(now.getMonth() + 1).toString().padStart(2,    '0')}/${now.getDate().toString().padStart(2, '0')}/${now.getFullYear()}`;\n  \n  // Attach savedAt date\n  parsedJson.savedAt = mmddyyyy;\n\n  return { json: parsedJson };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -896,
+        800
+      ],
+      "id": "c796b4d7-d868-4878-ad97-21d5c36c31c5",
+      "name": "JSON Parser"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_ID",
+          "mode": "list",
+          "cachedResultName": "Job Agent",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.format('d-M-yyyy') }}",
+            "Job Title": "={{ $('Score Router').item.json.title }}",
+            "Company Name": "={{ $('Score Router').item.json.company }}",
+            "Pay": "={{ $('Score Router').item.json.pay }}",
+            "Link": "={{ $('Score Router').item.json.link }}",
+            "Quantitative Score": "={{ $('Score Router').item.json.score }}",
+            "Location": "={{ $('Score Router').item.json.location }}",
+            "source": "={{ $('Score Router').item.json.source }}",
+            "Run ID": "={{ $('Job Search Webhook').first().json.body.runId }}",
+            "Job Key": "={{ $('Score Router').item.json.jobKey }}"
+          },
+          "matchingColumns": [
+            "Job Key"
+          ],
+          "schema": [
+            {
+              "id": "Job Key",
+              "displayName": "Job Key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Job Title",
+              "displayName": "Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Company Name",
+              "displayName": "Company Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Pay",
+              "displayName": "Pay",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Quantitative Score",
+              "displayName": "Quantitative Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Run ID",
+              "displayName": "Run ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -320,
+        960
+      ],
+      "id": "90be0559-9f77-4f0c-a296-58e2b49d24cf",
+      "name": "Google Sheets",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Gmail-n8n-one"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "jobs_results",
+        "options": {}
+      },
+      "id": "70b74430-7c58-4771-834b-6a9e73379f6e",
+      "name": "Split Job Listings",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 1,
+      "position": [
+        -3568,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "return items\n  .filter(item => {\n    const job = item.json;\n    const jobTitle = $('Job Search Webhook').first().json.body.jobTitle || '';\n    const titleWords = jobTitle.split(/\\s+/).filter(Boolean).map(w => w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'));\n    const matchTitles = titleWords.length ? [new RegExp(titleWords.join('|'), 'i')] : [/./];\n    return matchTitles.some(rx => rx.test(job.title));\n  })\n  .map(item => {\n    const job = item.json;\n    const applyOptions = job.apply_options || [];\n    const indeed = applyOptions.find(opt => opt.title?.toLowerCase() === 'indeed');\n    const fallback = applyOptions[0];\n    const payMatch = job.description.match(/\\$\\d{2,3}(?:,\\d{3})*(?:\\s*-\\s*\\$\\d{2,3}(?:,\\d{3})*)?/);\n    const pay = payMatch ? payMatch[0] : 'N/A';\n    return {\n      json: {\n        title: job.title,\n        company: job.company_name,\n        location: job.location,\n        description: job.description,\n        link: indeed?.link || fallback?.link || null,\n        pay: pay,\n        date: job.detected_extensions?.posted_at,\n      }\n    };\n  });\n"
+      },
+      "id": "c0ba4067-4cbd-43b1-87ce-ecc9d9c37300",
+      "name": "Filter Google Jobs",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -3344,
+        544
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = items;\nconst resumeText = $items(\"Edit Fields\", 0)[0].json.resume;\n\n// Define the job source manually for this branch\nconst jobSource = \"Google\"; // Change accordingly per source node\n\nreturn jobs.map(job => ({\n  json: {\n    ...job.json,         // Keep original job details\n    resume: resumeText,  // Add resume as a separate field (DO NOT inject into description)\n    source: jobSource    // Track where this job came from\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3120,
+        544
+      ],
+      "id": "6fa71866-4449-41fe-b4c1-49b9fff3577e",
+      "name": "Combine Google Jobs with Resume"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = items;\nconst resumeText = $items(\"Edit Fields\", 0)[0].json.resume;\n\n// Define your job source manually for this block\nconst jobSource = \"RemoteOK\"; // Change to \"RemoteOK\", \"Adzuna\", etc. per branch\n\nreturn jobs.map(job => ({\n  json: {\n    ...job.json,\n    resume: resumeText,\n    source: jobSource\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3120,
+        352
+      ],
+      "id": "8286d0bd-dc6c-49e3-8f67-de77c678dfcc",
+      "name": "Combine Remote Jobs with Resume"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobTitle = $('Job Search Webhook').first().json.body.jobTitle;\nconst rawLocation = $('Job Search Webhook').first().json.body.location || '';\nconst wantsRemote = /\\bremote\\b/i.test(rawLocation);\n\n// Adzuna's geocoder can't resolve compound strings like \"Remote, Hybrid, City\" —\n// strip those qualifiers and keep the actual place name (same cleanup used for\n// Resolve Google Jobs Location; freeform input tends to put the city last).\nconst cleanedParts = rawLocation\n  .replace(/\\b(remote|hybrid)\\b/gi, '')\n  .split(',')\n  .map(s => s.trim())\n  .filter(Boolean);\n// Search every real city mentioned, not just one guessed segment — the Adzuna\n// Loop downstream already iterates one {what, where} pair at a time, so let it\n// process all of them instead of silently dropping cities.\nconst locations = cleanedParts.length ? cleanedParts : [rawLocation];\n\n// Adzuna requires a country code in the URL path (not just free-text location).\n// Detect India vs default to US based on keywords in the user's raw location string.\nconst INDIA_KEYWORDS = ['india', 'ahmedabad', 'gandhinagar', 'mumbai', 'delhi', 'bangalore', 'bengaluru', 'pune', 'hyderabad', 'chennai', 'kolkata', 'surat', 'jaipur', 'noida', 'gurgaon', 'gurugram'];\nconst locationLower = rawLocation.toLowerCase();\nconst country = INDIA_KEYWORDS.some(kw => locationLower.includes(kw)) ? 'in' : 'us';\n\nconst queries = locations.map(where => ({ what: jobTitle, where, country }));\n\n// Adzuna has no \"remote\" location filter (where=Remote always returns 0) — the\n// only way it surfaces remote-tagged listings is a keyword in `what`, searched\n// country-wide (where left blank). Add that as its own query when requested.\nif (wantsRemote) {\n  queries.push({ what: `${jobTitle} remote`, where: '', country });\n}\n\nreturn [{\n  json: {\n    json: queries\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4240,
+        912
+      ],
+      "id": "eac977b8-6f5a-4727-8203-c292abc745cf",
+      "name": "Set Location and Position Parameters"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "results",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -3568,
+        736
+      ],
+      "id": "c644453b-c13e-4931-bf84-13d9a296ec21",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Enhanced Deduplicate v3.6 - More aggressive fuzzy matching\nconst seen = new Set();\nconst seenNormalized = new Set();\n\nfunction normalize(str) {\n  if (!str) return '';\n  return str.toLowerCase()\n    .replace(/[^a-z0-9\\s]/g, '')      // Remove all punctuation\n    .replace(/\\b(inc|llc|ltd|corp|corporation|company|co|group|holdings|services|solutions|technologies|tech|remote|hybrid|onsite)\\b/g, '')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nfunction normalizeTitle(str) {\n  if (!str) return '';\n  return str.toLowerCase()\n    .replace(/[^a-z0-9\\s]/g, '')\n    .replace(/\\b(senior|sr|junior|jr|lead|principal|staff|i{1,3}|iv|v|remote|hybrid|contract|temp|temporary)\\b/g, '')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\n// Simple similarity check: % of shared words\nfunction wordSimilarity(a, b) {\n  if (!a || !b) return 0;\n  const wordsA = new Set(a.split(' ').filter(w => w.length > 2));\n  const wordsB = new Set(b.split(' ').filter(w => w.length > 2));\n  if (wordsA.size === 0 || wordsB.size === 0) return 0;\n  let shared = 0;\n  for (const w of wordsA) { if (wordsB.has(w)) shared++; }\n  return shared / Math.min(wordsA.size, wordsB.size);\n}\n\nconst deduped = items.filter(item => {\n  const job = item.json;\n\n  // Exact key: title|company|location\n  const exactKey = `${(job.title||'').toLowerCase()}|${(job.company||'').toLowerCase()}|${(job.location||'').toLowerCase()}`;\n  if (seen.has(exactKey)) return false;\n  seen.add(exactKey);\n\n  // Normalized key: stripped title | stripped company (catches \"Sr.\" vs \"Senior\", \"Inc.\" vs \"\")\n  const normTitle = normalizeTitle(job.title);\n  const normCompany = normalize(job.company);\n  const normKey = `${normTitle}|${normCompany}`;\n  if (seenNormalized.has(normKey)) return false;\n\n  // Fuzzy check: compare against all seen normalized titles for same company\n  for (const seenKey of seenNormalized) {\n    const [seenTitle, seenComp] = seenKey.split('|');\n    if (seenComp === normCompany && wordSimilarity(normTitle, seenTitle) >= 0.8) {\n      return false; // 80%+ word overlap with same company = duplicate\n    }\n  }\n\n  seenNormalized.add(normKey);\n\n  // Clean up: remove `url` field, keep `link`\n  const { url, ...cleanedJob } = job;\n  item.json = cleanedJob;\n  return true;\n});\n\nreturn deduped;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2672,
+        1056
+      ],
+      "id": "7d028a48-23d9-450a-a8d5-3e535ae107d7",
+      "name": "Deduplicate Jobs Before AI"
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -3344,
+        1008
+      ],
+      "id": "a68f9b23-fcab-48e9-a4c2-8493c5d6c59c",
+      "name": "Wait",
+      "webhookId": "98a87ac0-7f95-4b22-98b8-713220ff3fb9"
+    },
+    {
+      "parameters": {
+        "numberInputs": 6
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [
+        -2896,
+        992
+      ],
+      "id": "82caf773-f2a5-4338-bbd8-90a2f56c9129",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "amount": 8
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -320,
+        672
+      ],
+      "id": "9bfb2078-0592-4071-9153-8cc2fe11bf9f",
+      "name": "Wait1",
+      "webhookId": "39e842e3-e94b-4f18-981b-efab7ae291f6"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1120,
+        800
+      ],
+      "id": "e778e5fd-7972-44b1-935f-6405f5ea5ab9",
+      "name": "Batch Feed AI Grader"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.filter(item => {\n  const title = item.json.title?.toLowerCase() || '';\n  // ── CONFIGURE: Add job title keywords to exclude ──────────────────────────\n  if (title.includes('sales')) return false;\n  if (title.includes('marketing')) return false;\n  // Add more exclusions as needed, e.g.:\n  // if (title.includes('data scientist')) return false;\n  // if (title.includes('devops')) return false;\n  // ─────────────────────────────────────────────────────────────────────────\n  return true;\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2224,
+        1056
+      ],
+      "id": "ccd2de6b-513a-4cce-9474-ef7e1153f76b",
+      "name": "Remove titles"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const job = item.json;\n  const location = job.location?.area?.join(', ') || job.location?.display_name || '';\n  const company = job.company?.display_name || '';\n\n  // Combine salary range\n  const salaryMin = job.salary_min;\n  const salaryMax = job.salary_max;\n  let pay = \"N/A\";\n  if (salaryMin && salaryMax) {\n    pay = `$${salaryMin.toLocaleString()} - $${salaryMax.toLocaleString()}`;\n  }\n\n  return {\n    json: {\n      title: job.title,\n      company: company,\n      description: job.description,\n      link: job.redirect_url || job.url || null, // ✅ normalize field name to \"link\"\n      location: location,\n      date: job.created,\n      pay,\n      salary_min: salaryMin,\n      salary_max: salaryMax,\n      salary_is_predicted: job.salary_is_predicted === \"1\"\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3344,
+        736
+      ],
+      "id": "e48ee514-6c48-4758-ab83-7ff3c7672a63",
+      "name": "Normalize Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize Salary v3.6 - NOW DROPS HOURLY JOBS\nreturn items.filter(item => {\n  const job = item.json;\n  const pay = (job.pay || '').toLowerCase();\n\n  // KILL hourly pay patterns: \"$28.85/hr\", \"$33 an hour\", \"hourly\", etc.\n  if (/(?:hour|hourly|\\/hr|per hr)/i.test(pay)) return false;\n\n  // KILL small dollar amounts with decimals (e.g. \"$28.85 - $33.65\")\n  // These are almost always hourly rates\n  const amounts = [...pay.matchAll(/\\$(\\d+(?:\\.\\d{2})?)/g)].map(m => parseFloat(m[1]));\n  if (amounts.length > 0 && amounts.every(a => a < 200)) return false;\n\n  return true;\n}).map(item => {\n  const job = item.json;\n\n  let pay = job.pay || null;\n  if (!pay && job.salary_min && job.salary_max) {\n    const min = Math.round(job.salary_min).toLocaleString();\n    const max = Math.round(job.salary_max).toLocaleString();\n    pay = `$${min} - $${max}`;\n  } else if (!pay && job.salary_min) {\n    const min = Math.round(job.salary_min).toLocaleString();\n    pay = `$${min}+`;\n  }\n\n  const { salary_min, salary_max, salary_is_predicted, ...rest } = job;\n  return { json: { ...rest, pay: pay || 'N/A' } };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2448,
+        1056
+      ],
+      "id": "47d2df5d-7333-4d12-a663-b4d6a17c22d1",
+      "name": "Normalize Salary",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── SCORING CONFIGURATION — tune these to your target role ────────────────\n// Add keywords relevant to your field and assign point values.\n// Higher points = stronger signal that the job matches your search.\n\nconst CORE_FUNCTION_KEYWORDS = {\n  // ── Replace with YOUR domain keywords ────────────────────────────────────\n  // Examples below are for a generic \"automation / AI\" job search.\n  // Change or add entries that match YOUR target role.\n  'automation': 40,\n  'process improvement': 30,\n  'optimization': 30,\n  'digital transformation': 35,\n  'artificial intelligence': 30,\n  'ai': 25,\n  'analytics': 25,\n  'operations': 20,\n};\n\nconst HIGH_VALUE_SKILL_KEYWORDS = {\n  // Technical skills that boost a job's relevance score\n  'python': 20,\n  'sql': 20,\n  'power bi': 20,\n  'tableau': 20,\n  'llm': 50,\n  'ai agent': 50,\n  'generative ai': 50,\n  'roi': 20,\n};\n\nconst TITLE_BONUS_KEYWORDS = [\n  // If ANY of these appear in the job title, add a flat bonus\n  'automation manager',\n  'automation specialist',\n  'process automation',\n  'digital transformation',\n  'intelligent automation',\n  'operations manager',\n];\n\nconst NEGATIVE_TITLE_KEYWORDS = [\n  // Jobs whose titles contain these words are auto-rejected\n  'sales', 'marketing', 'underwriter',\n  'credit risk', 'banker', 'loan', 'financial advisor',\n  'driver', 'warehouse associate', 'forklift', 'intern',\n];\n\nconst SENIORITY_MODIFIERS = {\n  'junior': -100,\n  'entry-level': -100,\n  'intern': -100,\n  'senior': 30,\n  'lead': 30,\n  'principal': 40,\n  'manager': 30,\n  'director': 50,\n  'vp': 45,\n  'vice president': 45,\n};\n// ─────────────────────────────────────────────────────────────────────────────\n\nfunction calculateScore(job) {\n  const title = (job.title || '').toLowerCase();\n  const description = (job.description || '').toLowerCase();\n  const fullText = `${title} ${description}`;\n\n  let score = 0;\n  let matchedKeywords = [];\n\n  // 1. Negative title kill switch\n  for (const keyword of NEGATIVE_TITLE_KEYWORDS) {\n    if (title.includes(keyword)) {\n      return { score: -999, matchedKeywords: [`Negative title: ${keyword}`] };\n    }\n  }\n\n  // 2. Hourly pay kill switch\n  const payStr = (job.pay || '').toLowerCase();\n  if (/(?:hour|hourly|\\/hr|per hr)/i.test(payStr)) {\n    return { score: -999, matchedKeywords: ['Hourly pay — auto-reject'] };\n  }\n  const payAmounts = [...payStr.matchAll(/\\$(\\d+(?:\\.\\d{2})?)/g)].map(m => parseFloat(m[1]));\n  if (payAmounts.length > 0 && payAmounts.every(a => a < 200)) {\n    return { score: -999, matchedKeywords: ['Hourly pay (small $) — auto-reject'] };\n  }\n\n  // 3. Core function keywords\n  for (const [keyword, points] of Object.entries(CORE_FUNCTION_KEYWORDS)) {\n    if (fullText.includes(keyword)) {\n      score += points;\n      matchedKeywords.push(`${keyword} (+${points})`);\n    }\n  }\n\n  // 4. High-value skill keywords\n  for (const [keyword, points] of Object.entries(HIGH_VALUE_SKILL_KEYWORDS)) {\n    if (fullText.includes(keyword)) {\n      score += points;\n      matchedKeywords.push(`${keyword} (+${points})`);\n    }\n  }\n\n  // 5. Title bonus\n  let titleBonus = false;\n  for (const kw of TITLE_BONUS_KEYWORDS) {\n    if (title.includes(kw)) {\n      score += 60;\n      matchedKeywords.push(`Title match: ${kw} (+60)`);\n      titleBonus = true;\n      break;\n    }\n  }\n\n  // 6. Seniority modifiers\n  for (const [keyword, mod] of Object.entries(SENIORITY_MODIFIERS)) {\n    if (title.includes(keyword)) {\n      score += mod;\n      if (mod > 0) matchedKeywords.push(`Seniority: ${keyword} (+${mod})`);\n    }\n  }\n\n  // 7. Auto-reject if no signal at all\n  const hits = Object.keys(CORE_FUNCTION_KEYWORDS).filter(k => fullText.includes(k));\n  const techHits = Object.keys(HIGH_VALUE_SKILL_KEYWORDS).filter(k => fullText.includes(k));\n  if (hits.length === 0 && techHits.length === 0 && !titleBonus) {\n    return { score: -999, matchedKeywords: ['No relevant signal found'] };\n  }\n\n  // 8. Remote/Hybrid preference bonus — remote ranked above hybrid\n  const locationText = (job.location || '').toLowerCase();\n  const remoteText = `${fullText} ${locationText}`;\n  const remoteSignal = /\\b(remote|anywhere|work from home|wfh)\\b/.test(remoteText);\n  const hybridSignal = /\\bhybrid\\b/.test(remoteText);\n  if (remoteSignal) {\n    score += 25;\n    matchedKeywords.push('Remote (+25)');\n  } else if (hybridSignal) {\n    score += 10;\n    matchedKeywords.push('Hybrid (+10)');\n  }\n\n  return { score, matchedKeywords };\n}\n\nfunction normalizeForJobKey(str) {\n  if (!str) return '';\n  return str.toLowerCase()\n    .replace(/[^\\w\\s]/g, '')\n    .replace(/\\s+/g, ' ')\n    .replace(/\\b(inc|llc|ltd|corp|corporation|company|co|group|holdings|services|solutions|technologies|tech)\\b/gi, '')\n    .trim();\n}\nfunction normalizeTitleForJobKey(str) {\n  if (!str) return '';\n  return str.toLowerCase()\n    .replace(/[^\\w\\s]/g, '')\n    .replace(/\\b(senior|sr|junior|jr|lead|principal|staff|remote|hybrid|contract)\\b/gi, '')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nreturn items.map(item => {\n  const job = item.json;\n  const { score, matchedKeywords } = calculateScore(job);\n  const jobKey = `${normalizeTitleForJobKey(job.title)}|${normalizeForJobKey(job.company)}`;\n  return {\n    json: {\n      ...job,\n      score,\n      reason: matchedKeywords.join(', '),\n      jobKey,\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2000,
+        1056
+      ],
+      "id": "aef806f5-14e4-47ce-9f3b-5ebff48c7630",
+      "name": "Smart Scorer"
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "engine",
+              "value": "google_jobs"
+            },
+            {
+              "name": "google_domain",
+              "value": "google.com"
+            },
+            {
+              "name": "q",
+              "value": "={{ $('Job Search Webhook').first().json.body.jobTitle }}"
+            },
+            {
+              "name": "hl",
+              "value": "en"
+            },
+            {
+              "name": "gl",
+              "value": "us"
+            },
+            {
+              "name": "location",
+              "value": "={{ $json.googleJobsLocation }}"
+            },
+            {
+              "name": "lrad",
+              "value": "50"
+            },
+            {
+              "name": "ltype",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3792,
+        544
+      ],
+      "id": "d4325fdc-2484-4737-a89e-082f84c96e30",
+      "name": "Fetch Google Jobs",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "SerpApi Query Auth"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://jooble.org/api/596fce8c-b263-48a0-8c55-9b8669950a72",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ keywords: $('Job Search Webhook').first().json.body.jobTitle, location: $('Job Search Webhook').first().json.body.location, radius: '50', salary: 0 }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3568,
+        1440
+      ],
+      "id": "eb39514a-7d2a-4ba0-b411-66832525cd81",
+      "name": "Fetch Jooble Jobs",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const joobleJobs = items[0].json.jobs || [];\n\nconst jobTitle = $('Job Search Webhook').first().json.body.jobTitle || '';\n\n// Jooble's own search returns broadly related postings, not strict keyword\n// matches (same behavior confirmed on LinkedIn/RemoteOK) — require the\n// specific tech terms from the search title, and rank matches by the order\n// those terms appear in the search (e.g. \"laravel php developer\" means\n// laravel-matching jobs rank above php-only matches).\nconst GENERIC_WORDS = new Set(['developer', 'engineer', 'programmer', 'specialist', 'senior', 'junior', 'lead', 'software', 'full', 'stack', 'fullstack', 'api', 'backend', 'back-end', 'web']);\nconst allTitleWords = jobTitle.split(/\\s+/).filter(Boolean);\nconst specificWords = allTitleWords.filter(w => !GENERIC_WORDS.has(w.toLowerCase()));\nconst priorityWords = (specificWords.length ? specificWords : allTitleWords).map(w => w.toLowerCase());\n\nfunction matchPriority(title) {\n  const t = (title || '').toLowerCase();\n  const idx = priorityWords.findIndex(w => t.includes(w));\n  return idx === -1 ? Infinity : idx;\n}\n\nreturn joobleJobs\n  .filter(job => matchPriority(job.title) !== Infinity)\n  .sort((a, b) => matchPriority(a.title) - matchPriority(b.title))\n  .map(job => {\n    const snippet = job.snippet;\n    let cleanDescription = '';\n\n    if (snippet) {\n      cleanDescription = snippet\n        .replace(/<[^>]*>?/gm, ' ')\n        .replace(/&[a-zA-Z0-9#]+;/g, ' ')\n        .replace(/\\s+/g, ' ')\n        .trim();\n    }\n\n    return {\n      json: {\n        title: job.title,\n        company: job.company,\n        location: job.location,\n        description: cleanDescription,\n        link: job.link,\n        pay: job.salary || 'N/A',\n        date: job.updated,\n      }\n    };\n  });"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3344,
+        1440
+      ],
+      "id": "903be68b-4abd-4727-8109-1e8610ad4b30",
+      "name": "Normalize the Jooble Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = items;\nconst resumeText = $items(\"Edit Fields\", 0)[0].json.resume;\n\n// Define your job source manually for this block\nconst jobSource = \"Jooble\"; // Change to \"RemoteOK\", \"Adzuna\", etc. per branch\n\nreturn jobs.map(job => ({\n  json: {\n    ...job.json,\n    resume: resumeText,\n    source: jobSource\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3120,
+        1440
+      ],
+      "id": "598bd41f-0834-4d06-ba6b-b3791bcfd479",
+      "name": "Combine Jooble Jobs with Resume"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = items;\nconst resumeText = $items(\"Edit Fields\", 0)[0].json.resume;\n\n// Define your job source manually for this block\nconst jobSource = \"Adzuna\"; // Change to \"RemoteOK\", \"Adzuna\", etc. per branch\n\nreturn jobs.map(job => ({\n  json: {\n    ...job.json,\n    resume: resumeText,\n    source: jobSource\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3120,
+        736
+      ],
+      "id": "19c235f2-4f7a-42d0-bd69-c65e37bbc716",
+      "name": "Combine Adzuna with Resume"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => ({\n  json: {\n    title: item.json.title,\n    company: item.json.company,\n    location: item.json.location,\n    description: item.json.description,\n    link: item.json.url,\n    pay: item.json.salary || 'N/A',\n    date: item.json.datePosted,\n    source: 'Indeed-Apify'\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3344,
+        1248
+      ],
+      "id": "ba4ad2ff-79da-40d5-a921-63baa8d7dd6f",
+      "name": "Normalize Fields2",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = items;\nconst resumeText = $items(\"Edit Fields\", 0)[0].json.resume;\n\n// Define your job source manually for this block\nconst jobSource = \"Indeed\"; // Change to \"RemoteOK\", \"Adzuna\", etc. per branch\n\nreturn jobs.map(job => ({\n  json: {\n    ...job.json,\n    resume: resumeText,\n    source: jobSource\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3120,
+        1248
+      ],
+      "id": "3d80dec8-0fbb-4325-b6c3-9027f28c56e7",
+      "name": "Combine Indeed with Resume",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.adzuna.com/v1/api/jobs/{{ $json.country }}/search/1",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "results_per_page",
+              "value": "10"
+            },
+            {
+              "name": "sort_by",
+              "value": "date"
+            },
+            {
+              "name": "what",
+              "value": "={{ $json.what }}"
+            },
+            {
+              "name": "where",
+              "value": "={{ $json.where }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3568,
+        928
+      ],
+      "id": "845d7bf4-26dc-4bc8-9366-98c7daf80a7c",
+      "name": "Fetch Adzuna Jobs",
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Adzuna Custom Auth"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -3792,
+        912
+      ],
+      "id": "979185e4-ce8b-4e82-9bf9-fba3bea9fdad",
+      "name": "Adzuna Loop"
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobTitle = $('Job Search Webhook').first().json.body.jobTitle || '';\n\n// LinkedIn's own keyword search does broad/fuzzy relevance matching, not\n// strict AND filtering — it blends in loosely related \"Developer\" roles\n// (MERN, Full Stack, ERPNext, etc.) alongside real matches. Require the\n// specific tech terms from the search title (same approach as RemoteOK's\n// Filter Relevant Jobs), falling back to all words only if nothing specific\n// remains.\nconst GENERIC_WORDS = new Set(['developer', 'engineer', 'programmer', 'specialist', 'senior', 'junior', 'lead', 'software', 'full', 'stack', 'fullstack', 'api', 'backend', 'back-end', 'web']);\nconst allTitleWords = jobTitle.split(/\\s+/).filter(Boolean);\nconst specificWords = allTitleWords.filter(w => !GENERIC_WORDS.has(w.toLowerCase()));\nconst titleWords = (specificWords.length ? specificWords : allTitleWords).map(w => w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'));\nconst relevantRegex = titleWords.length ? new RegExp(titleWords.join('|'), 'i') : /./;\n\nreturn items\n  .filter(item => relevantRegex.test(item.json.title || ''))\n  .map(item => ({\n    json: {\n      title: item.json.title,\n      company: item.json.company,\n      location: item.json.location,\n      description: item.json.description,\n      link: item.json.url,\n      pay: 'N/A',\n      date: item.json.datePosted,\n      source: 'LinkedIn-Apify'\n    }\n  }));"
+      },
+      "id": "2f47d46a-4868-40f0-bb62-a974de7e3c92",
+      "name": "Normalize LinkedIn Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3344,
+        1632
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = items;\nconst resumeText = $items(\"Edit Fields\", 0)[0].json.resume;\n\nreturn jobs.map(job => ({\n  json: {\n    ...job.json,\n    resume: resumeText,\n    source: \"LinkedIn\"\n  }\n}));"
+      },
+      "id": "505f4e09-b097-4327-95c8-8028be4c40b5",
+      "name": "Combine LinkedIn with Resume",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3120,
+        1632
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has-items",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1d255730-2714-4773-ab03-5cc8ef08e290",
+      "name": "Skip If Empty Batch",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -896,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# 🔎 Job Scout\n**Automated daily job search across 6 boards.**\n\nFetches, scores, and AI-evaluates listings every morning — then emails you only the best matches.\n\n**Quick Setup:**\n1. Replace every `YOUR_*` placeholder with a real value\n2. Assign credentials: Gmail · Google Sheets · OpenRouter\n3. Upload your resume PDF to Google Drive\n4. Configure keywords in **Smart Scorer** + Fetch nodes\n5. Activate the workflow!\n\n📖 See **README.md** for full setup guide.",
+        "height": 280,
+        "width": 580,
+        "color": 3
+      },
+      "id": "4bdd6aa2-6a8b-435e-a0e5-e5b955d423e6",
+      "name": "📖 Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -5056,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## ⚙️ Step 1 — Initialization\nTriggered daily (default **7 AM UTC**). Loads your resume and reads your Google Sheets history to build a preference profile.\n\n**Configure these nodes:**\n- **Schedule Trigger** → change `triggerAtHour` to your preferred time\n- **Get Resume** → replace `YOUR_GOOGLE_DRIVE_RESUME_FILE_ID` (file must be publicly viewable)\n- **Read Applied History** → replace `YOUR_GOOGLE_SHEETS_ID`",
+        "height": 772,
+        "width": 1564,
+        "color": 4
+      },
+      "id": "0c8cfab9-f3b6-42bb-a987-03b8a874e0b5",
+      "name": "⚙️ Step 1 — Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -5088,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🔍 Step 2 — Fetch from 6 Job Boards\nAll sources run **in parallel**. Each requires a free API key or token (see README for signup links).\n\n- **Fetch Google Jobs** → replace `YOUR_SERPAPI_KEY` and `YOUR_SEARCH_KEYWORDS` in the URL\n- **Fetch Adzuna Jobs** → replace `YOUR_ADZUNA_APP_ID` and `YOUR_ADZUNA_APP_KEY` in query params\n- **Apify (Indeed)** → replace `YOUR_APIFY_TOKEN`; set `\"position\"` to your job title\n- **Fetch LinkedIn Jobs (Apify)** → replace `YOUR_APIFY_TOKEN`; set `\"keywords\"` to your role\n- **Fetch Jooble Jobs** → replace `YOUR_JOOBLE_API_KEY` in the URL path; set `\"keywords\"` in the body\n- **RemoteOK** → free public feed, no key needed ✓\n\n**Set Location & Position Parameters** → edit the `what`/`where` pairs for Adzuna keyword searches",
+        "height": 1712,
+        "width": 1116,
+        "color": 3
+      },
+      "id": "d2f3289d-e022-4fd8-ac93-5f9d3d899b2d",
+      "name": "🔍 Step 2 — Fetch Jobs",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -4304,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🔗 Step 3 — Normalize & Merge\nAll 6 sources are normalized into a unified schema:\n`{ title, company, description, location, link, pay, date }`\n\nThen merged into a single stream for deduplication.\n\n**No configuration needed here.**",
+        "height": 1712,
+        "width": 444,
+        "color": 5
+      },
+      "id": "49123d70-237e-4ce4-846f-248b321f7de9",
+      "name": "🔗 Step 3 — Normalize & Merge",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -3184,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🧹 Step 4 — Deduplicate & Filter\n**Deduplicate** → removes listings seen across multiple boards (matched by title + company).\n**Filter Out Seen Jobs** → skips jobs already saved to your Google Sheet (no repeat emails).\n\n⚠️ **Filter by Location** → open this node and edit `ALLOWED_LOCATIONS`:\n- Remote/hybrid jobs are **always** kept\n- Add your target cities and state abbreviation\n- Example: `'austin', 'dallas', ', tx'`",
+        "height": 488,
+        "width": 892,
+        "color": 5
+      },
+      "id": "6f30ee58-ba73-453a-9e00-874a6368f3f4",
+      "name": "🧹 Step 4 — Dedup & Filter",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2960,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## ⭐ Step 5 — Smart Scoring\nKeyword-based scoring **before** AI — cheaply filters irrelevant jobs so you don't waste AI credits.\n\nOnly jobs scoring **> 0** reach the AI evaluator.\n\n⚠️ **Remove titles** → add keywords for job titles you never want (e.g. `'sales'`, `'intern'`)\n⚠️ **Smart Scorer** → edit `CORE_FUNCTION_KEYWORDS` with terms for your target role. Higher point values = stronger relevance signal.",
+        "height": 440,
+        "width": 668,
+        "color": 4
+      },
+      "id": "7b9df70f-a96b-449d-ac44-4101d8b0586b",
+      "name": "⭐ Step 5 — Smart Scoring",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2288,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🤖 Step 6 — Application Email Drafting\n**Routing is now purely quantitative.** `Score Router` (IF node) checks `score >= 0` from the pre-screener:\n- **True** → job goes through the AI loop below and gets a drafted application email\n- **False** → job skips the AI entirely and is logged straight to the `Declined` tab (see Step 7)\n\nFor passing jobs, `Job Application Email Writer` (OpenAI `gpt-4o-mini` via the same `OpenAI Chat Model (Evaluator)` connector) writes a tailored **application email** (subject + body, cover-letter style) referencing that job's actual requirements and the candidate's resume. Jobs are processed in batches of 1 with an 8s `Wait1` between calls to respect rate limits.\n\n⚠️ The old **`Job Match Evaluator`** (confidence_score/summary/fit_reason) and old **`Only scores > 0`** filter are disabled and disconnected from the live path — kept on canvas only as a rollback reference. Do not re-enable without also rewiring them.",
+        "height": 1104,
+        "width": 740
+      },
+      "id": "b902f20d-933b-4358-b467-c1469644cfd1",
+      "name": "🤖 Step 6 — AI Evaluation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1040,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 📤 Step 7 — Draft, Save & Log\n**Passing jobs** (`score >= 0`): `JSON Parser` parses the email-writer's JSON → `Create Gmail Draft` saves it as a **Gmail draft only (never sent, \"To\" left blank for you to fill in)** → `Google Sheets` appends the full record to **`Sheet1`** with `Draft Email Created = Yes`.\n\n**Declined jobs** (`score < 0`): routed directly from `Score Router`'s false branch to `Append Declined Jobs`, which appends the full record to the **`Declined`** tab with `Draft Email Created = No` — no AI call, no email.\n\nBoth branches merge at `Merge Results` before `Summarize Run Results` → `Log Run Complete`, so the `Runs` tab's `resultsCount` reflects everything processed (applied + declined).\n\n⚠️ **`Create Gmail Draft`** → needs a **Gmail OAuth2 credential** attached (none configured yet — must be added via the n8n UI, OAuth2 can't be set via API).\n⚠️ **`Declined` tab** must be created manually in the spreadsheet (same as the `Runs` tab was) before this will work.\n\n💡 **Shared column schema (both `Sheet1` and `Declined`):**\n`Job Title | Company Name | Pay | Link | Quantitative Score | Location | Matched Keywords | source | savedAt | Run ID | Draft Email Created | Email Subject`",
+        "height": 928,
+        "width": 796,
+        "color": 2
+      },
+      "id": "ded75c03-129c-45ce-88d2-2c6a16914f8c",
+      "name": "📤 Step 7 — Output",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "job-search",
+        "options": {}
+      },
+      "id": "cca2e241-af62-4366-b7d5-727d9544c4b1",
+      "name": "Job Search Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -4912,
+        1440
+      ],
+      "webhookId": "eb708926-2ac8-4bc5-ba1a-16b1f2763194"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_ID",
+          "mode": "list",
+          "cachedResultName": "Job Agent",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 114455467,
+          "mode": "list",
+          "cachedResultName": "Job Process",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit#gid=114455467"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Run ID": "={{ $json.body.runId }}",
+            "status": "Pending"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Run ID",
+              "displayName": "Run ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "startedAt ",
+              "displayName": "startedAt ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resultsCount ",
+              "displayName": "resultsCount ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "highScoreSheetUrl ",
+              "displayName": "highScoreSheetUrl ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lowScoreSheetUrl",
+              "displayName": "lowScoreSheetUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "6c620ad7-db22-4703-82ad-2c00338893b2",
+      "name": "Log Run Started",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -4688,
+        1536
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Gmail-n8n-one"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "3d37c660-7083-4d5e-8398-8723989c711f",
+      "name": "OpenAI Chat Model (Evaluator)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -608,
+        624
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const resultsCount = items.length;\nconst SPREADSHEET_ID = 'YOUR_GOOGLE_SHEETS_ID';\nconst highScoreSheetUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit#gid=0`;\nconst lowScoreSheetUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit#gid=1007147172`;\nreturn [{ json: { resultsCount, highScoreSheetUrl, lowScoreSheetUrl } }];"
+      },
+      "id": "a7f23553-3091-4a46-8d1f-1f61c8664e0d",
+      "name": "Summarize Run Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_ID",
+          "mode": "list",
+          "cachedResultName": "Job Agent",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 114455467,
+          "mode": "list",
+          "cachedResultName": "Job Process",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit#gid=114455467"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Run ID": "={{ $('Job Search Webhook').first().json.body.runId }}",
+            "status": "completed",
+            "resultsCount ": "={{ $json.resultsCount }}",
+            "highScoreSheetUrl ": "={{ $json.highScoreSheetUrl }}",
+            "lowScoreSheetUrl": "={{ $json.lowScoreSheetUrl }}"
+          },
+          "matchingColumns": [
+            "Run ID"
+          ],
+          "schema": [
+            {
+              "id": "Run ID",
+              "displayName": "Run ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "startedAt ",
+              "displayName": "startedAt ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resultsCount ",
+              "displayName": "resultsCount ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "highScoreSheetUrl ",
+              "displayName": "highScoreSheetUrl ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lowScoreSheetUrl",
+              "displayName": "lowScoreSheetUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "5422359e-5b90-47d2-8bc8-480fead03fcf",
+      "name": "Log Run Complete",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        352,
+        960
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Gmail-n8n-one"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "job-results",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "52bfd725-0a11-44f3-bdad-29bcbf8e45d2",
+      "name": "Get Job Results",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -4912,
+        1856
+      ],
+      "webhookId": "cd694eaa-40f6-4011-98b1-b24730552691"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": 114455467,
+          "cachedResultName": "Job Process",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit#gid=114455467"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Run ID",
+              "lookupValue": "={{ $json.query.runId }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "id": "425f689f-ae74-466f-a962-ccfa4def6988",
+      "name": "Read Run Status",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -4688,
+        1856
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Gmail-n8n-one"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const statusRows = $('Read Run Status').all();\nif (statusRows.length === 0) {\n  return [{ json: { status: 'not_found' } }];\n}\nconst rawRow = statusRows[0].json;\nconst row = {};\nfor (const [key, value] of Object.entries(rawRow)) {\n  row[key.trim()] = value;\n}\nreturn [{\n  json: {\n    status: row.status || 'running',\n    resultsCount: Number(row.resultsCount) || 0,\n    highScoreSheetUrl: row.highScoreSheetUrl || null,\n    lowScoreSheetUrl: row.lowScoreSheetUrl || null,\n  },\n}];"
+      },
+      "id": "ef7ba597-b272-4e13-8fa5-cfae3de1faad",
+      "name": "Build Poll Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4464,
+        1856
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "9937034d-22aa-451a-ada1-d020e42fc4f3",
+      "name": "Respond With Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -4240,
+        1856
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fd49ea89-5f3c-45fb-8f97-106bf5abbada",
+              "name": "resume",
+              "value": "={{ $json.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -4464,
+        1344
+      ],
+      "id": "a352cd64-a242-4e3f-a040-573486171660",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -4016,
+        912
+      ],
+      "id": "514d6d37-97af-493a-981e-a0f7108629a6",
+      "name": "Separate Out Titles and Locations"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = ($('Job Search Webhook').first().json.body.location || '').trim();\n\nconst cleanedParts = raw\n  .replace(/\\b(remote|hybrid)\\b/gi, '')\n  .split(',')\n  .map(s => s.trim())\n  .filter(s => s);\n\nasync function resolveLocation(query) {\n  if (!query) return null;\n  try {\n    const results = await $helpers.httpRequest({\n      method: 'GET',\n      url: 'https://serpapi.com/locations.json',\n      qs: { q: query, limit: 1 },\n      json: true,\n    });\n    return Array.isArray(results) && results.length > 0 ? results[0].canonical_name : null;\n  } catch (e) {\n    return null;\n  }\n}\n\n// Try the full cleaned text first (handles real \"City, State\" input),\n// then fall back to individual comma-separated segments, last-first\n// (freeform Indian-style input tends to put the city last, e.g. \"MG Road, Ahmedabad\").\nlet canonical = await resolveLocation(cleanedParts.join(', '));\n\nif (!canonical) {\n  for (const part of [...cleanedParts].reverse()) {\n    canonical = await resolveLocation(part);\n    if (canonical) break;\n  }\n}\n\nreturn items.map(item => ({\n  json: {\n    ...item.json,\n    googleJobsLocation: canonical || '',\n  },\n}));"
+      },
+      "id": "cf229cac-4a19-4c69-9163-b86d4ab6fc7a",
+      "name": "Resolve Google Jobs Location",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4016,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "hMvNSpz3JnHgl5jkh",
+          "cachedResultName": "misceres/indeed-scraper"
+        },
+        "customBody": "={{ JSON.stringify({ position: $('Job Search Webhook').first().json.body.jobTitle, location: $('Job Search Webhook').first().json.body.location, country: 'US', maxItems: 25, fromAge: 1, proxyConfiguration: { useApifyProxy: true } }) }}"
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        -3568,
+        1248
+      ],
+      "id": "50e2861c-5524-4aa0-8915-7cf25dfb70bc",
+      "name": "Fetch Indeed Jobs (Apify)",
+      "credentials": {
+        "apifyApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Apify account API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "SnNEWiOAQe9V9bEzL",
+          "cachedResultName": "practicaltools/linkedin-jobs"
+        },
+        "customBody": "={{ JSON.stringify({ keywords: $('Job Search Webhook').first().json.body.jobTitle, location: $('Job Search Webhook').first().json.body.location, workLocation: ['1', '2', '3'], timePosted: 'r604800', maxPages: 2, proxy: { useApifyProxy: true } }) }}"
+      },
+      "id": "34281706-8cec-457d-b8f6-031af40ca678",
+      "name": "Fetch LinkedIn Jobs (Apify Native)",
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        -3568,
+        1632
+      ],
+      "credentials": {
+        "apifyApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Apify account API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "score-gte-0",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "dcd095f1-f666-44dc-97bd-72d64004b8ec",
+      "name": "Score Router",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1776,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an expert career coach and professional email writer. This job has already cleared a quantitative keyword-match pre-screen (score {{ $json[\"score\"] }}) — your job is to write the candidate's application email for it, tailored to this specific role, using their resume.\n\n**Instructions:**\n1. Write a concise, professional application email (100-160 words) in the candidate's voice, plain prose only — no bullet points, no markdown, no headers. Structure:\n   - Opening line: state the job title and company being applied to.\n   - 1-2 sentences: highlight the candidate's most relevant experience/skills from their resume that match THIS job's specific requirements (name real technologies/skills from the job description that the resume actually supports — do not invent experience).\n   - Closing line: mention the resume is attached for review and invite further discussion.\n   - Do not add a signature line (e.g. \"Best regards, [Name]\") unless the resume clearly states the candidate's full name — if it does, end with \"Best regards,\" followed by that name; otherwise end at the closing sentence.\n   Match this reference example's tone and length exactly:\n\n   Dear Hiring Manager,\n\n   I am applying for the Backend Developer (PHP/Laravel) position at FACILINK.\n\n   I have 6+ years of experience in PHP/Laravel development with strong knowledge of REST APIs, MySQL, and third party integrations. I have built secure backend systems, optimized database performance, and worked with Git to deliver clean, reliable, and production ready applications.\n\n   My resume is attached for your review. I would welcome the opportunity to discuss how my experience can support your team.\n\n2. Write an `email_subject` line, e.g. \"Application for {Job Title} at {Company}\" (adapt naturally to the role).\n3. Extract `pay` from the job data if available, otherwise return \"N/A\".\n4. You MUST respond with a valid JSON object only. Do not include any text, code fences, or explanations outside of the JSON structure.\n\n**Input Data:**\n- Job Score (from pre-screener): {{ $json[\"score\"] }}\n- Matched Keywords (from pre-screener): {{ $json[\"reason\"] }}\n- Job Title: {{ $json[\"title\"] }}\n- Company: {{ $json[\"company\"] }}\n- Description: {{ $json[\"description\"] }}\n- Resume: {{ $json[\"resume\"] }}\n\n**Required JSON Output Format:**\n{\n  \"title\": \"{{$json[\"title\"]}}\",\n  \"company\": \"{{$json[\"company\"]}}\",\n  \"link\": \"{{$json[\"link\"]}}\",\n  \"location\": \"{{$json[\"location\"]}}\",\n  \"pay\": \"<extracted pay or N/A>\",\n  \"score\": {{$json[\"score\"]}},\n  \"source\": \"{{ $json.source }}\",\n  \"matched_keywords\": \"{{ $json.reason }}\",\n  \"email_subject\": \"<your subject line>\",\n  \"email_body\": \"<your email body>\"\n}",
+        "options": {}
+      },
+      "id": "efaef809-f577-4be3-8537-fb56b763fb91",
+      "name": "Job Application Email Writer",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -672,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "={{ $json.email_subject }}",
+        "message": "={{ $json.email_body }}",
+        "options": {}
+      },
+      "id": "4d3fbc1b-b322-4305-8265-dab4ee957b6a",
+      "name": "Create Gmail Draft",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -608,
+        800
+      ],
+      "webhookId": "0b9e5714-de01-4649-ad80-4349d18527ee",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Gmail ankita dobariyaa"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_ID",
+          "mode": "list",
+          "cachedResultName": "Job Agent",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1007147172,
+          "mode": "list",
+          "cachedResultName": "Sheet2",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit#gid=1007147172"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.format('d-M-yyyy') }}",
+            "Job Title": "={{ $json.title }}",
+            "Company Name": "={{ $json.company }}",
+            "Pay": "={{ $json.pay }}",
+            "Link": "={{ $json.link }}",
+            "Quantitative Score": "={{ $json.score }}",
+            "Location": "={{ $json.location }}",
+            "source": "={{ $json.source }}",
+            "Run ID": "={{ $('Job Search Webhook').first().json.body.runId }}",
+            "Job Key": "={{ $json.jobKey }}"
+          },
+          "matchingColumns": [
+            "Job Key"
+          ],
+          "schema": [
+            {
+              "id": "Job Key",
+              "displayName": "Job Key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Job Title",
+              "displayName": "Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Company Name",
+              "displayName": "Company Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Pay",
+              "displayName": "Pay",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Link",
+              "displayName": "Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Quantitative Score",
+              "displayName": "Quantitative Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Run ID",
+              "displayName": "Run ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "5cd11e16-9e58-4864-9204-14764b9fe62e",
+      "name": "Append Declined Jobs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -528,
+        1200
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Gmail-n8n-one"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "f7ee1bb0-1f26-4519-b549-618f58936607",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -96,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_ID",
+          "mode": "list",
+          "cachedResultName": "Job Agent",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit#gid=0"
+        },
+        "options": {}
+      },
+      "id": "8925891d-bd3c-483e-be59-be4c41396623",
+      "name": "Refresh Seen Jobs (Sheet1)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -1776,
+        1008
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Gmail-n8n-one"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEETS_ID",
+          "mode": "list",
+          "cachedResultName": "Job Agent",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1007147172,
+          "mode": "list",
+          "cachedResultName": "Sheet2",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEETS_ID/edit#gid=1007147172"
+        },
+        "options": {}
+      },
+      "id": "8cd58041-df9e-4d0d-a4c0-c239a26372e9",
+      "name": "Refresh Seen Jobs (Sheet2)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -1776,
+        1200
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Gmail-n8n-one"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const newJobs = items;\nlet sheetData = [];\ntry {\n  const accepted = $('Refresh Seen Jobs (Sheet1)').all();\n  const declined = $('Refresh Seen Jobs (Sheet2)').all();\n  sheetData = [...accepted, ...declined];\n} catch (e) {\n  sheetData = [];\n}\n\nfunction normalize(str) {\n  if (!str) return '';\n  return str.toLowerCase()\n    .replace(/[^\\w\\s]/g, '')\n    .replace(/\\s+/g, ' ')\n    .replace(/\\b(inc|llc|ltd|corp|corporation|company|co|group|holdings|services|solutions|technologies|tech)\\b/gi, '')\n    .trim();\n}\nfunction normalizeTitle(str) {\n  if (!str) return '';\n  return str.toLowerCase()\n    .replace(/[^\\w\\s]/g, '')\n    .replace(/\\b(senior|sr|junior|jr|lead|principal|staff|remote|hybrid|contract)\\b/gi, '')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\nfunction wordSimilarity(a, b) {\n  if (!a || !b) return 0;\n  const wordsA = new Set(a.split(' ').filter(w => w.length > 2));\n  const wordsB = new Set(b.split(' ').filter(w => w.length > 2));\n  if (wordsA.size === 0 || wordsB.size === 0) return 0;\n  let shared = 0;\n  for (const w of wordsA) { if (wordsB.has(w)) shared++; }\n  return shared / Math.min(wordsA.size, wordsB.size);\n}\n\nconst seenUrls = new Set();\nconst seenKeys = new Set();\nconst seenNormTitles = [];\nfor (const item of sheetData) {\n  const row = item.json;\n  if (row['Link']) {\n    seenUrls.add(row['Link'].trim());\n    seenUrls.add(row['Link'].trim().split('?')[0]);\n  }\n  const title = normalize(row['Job Title']);\n  const company = normalize(row['Company Name']);\n  if (title && company) {\n    seenKeys.add(`${title}|${company}`);\n    seenNormTitles.push({ title: normalizeTitle(row['Job Title']), company });\n  }\n}\n\nlet dupeCount = 0;\nconst filtered = newJobs.filter(item => {\n  const job = item.json;\n  const link = (job.link || '').trim();\n  const cleanLink = link.split('?')[0];\n  const title = normalize(job.title);\n  const company = normalize(job.company);\n  const normTitle = normalizeTitle(job.title);\n  if (link && seenUrls.has(link)) { dupeCount++; return false; }\n  if (cleanLink && seenUrls.has(cleanLink)) { dupeCount++; return false; }\n  if (title && company && seenKeys.has(`${title}|${company}`)) { dupeCount++; return false; }\n  for (const seen of seenNormTitles) {\n    if (seen.company === company && wordSimilarity(normTitle, seen.title) >= 0.8) {\n      dupeCount++;\n      return false;\n    }\n  }\n  return true;\n});\n\nconsole.log(`FINAL DEDUPE CHECK (before AI): Filtered ${dupeCount} last-minute dupes, ${filtered.length} jobs remain`);\nreturn filtered;\n"
+      },
+      "id": "19166390-6e40-4395-a06b-6f9bbfe05c3a",
+      "name": "Final Dedup Check (Before AI)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1552,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const newJobs = items;\nlet sheetData = [];\ntry {\n  const accepted = $('Refresh Seen Jobs (Sheet1)').all();\n  const declined = $('Refresh Seen Jobs (Sheet2)').all();\n  sheetData = [...accepted, ...declined];\n} catch (e) {\n  sheetData = [];\n}\n\nfunction normalize(str) {\n  if (!str) return '';\n  return str.toLowerCase()\n    .replace(/[^\\w\\s]/g, '')\n    .replace(/\\s+/g, ' ')\n    .replace(/\\b(inc|llc|ltd|corp|corporation|company|co|group|holdings|services|solutions|technologies|tech)\\b/gi, '')\n    .trim();\n}\nfunction normalizeTitle(str) {\n  if (!str) return '';\n  return str.toLowerCase()\n    .replace(/[^\\w\\s]/g, '')\n    .replace(/\\b(senior|sr|junior|jr|lead|principal|staff|remote|hybrid|contract)\\b/gi, '')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\nfunction wordSimilarity(a, b) {\n  if (!a || !b) return 0;\n  const wordsA = new Set(a.split(' ').filter(w => w.length > 2));\n  const wordsB = new Set(b.split(' ').filter(w => w.length > 2));\n  if (wordsA.size === 0 || wordsB.size === 0) return 0;\n  let shared = 0;\n  for (const w of wordsA) { if (wordsB.has(w)) shared++; }\n  return shared / Math.min(wordsA.size, wordsB.size);\n}\n\nconst seenUrls = new Set();\nconst seenKeys = new Set();\nconst seenNormTitles = [];\nfor (const item of sheetData) {\n  const row = item.json;\n  if (row['Link']) {\n    seenUrls.add(row['Link'].trim());\n    seenUrls.add(row['Link'].trim().split('?')[0]);\n  }\n  const title = normalize(row['Job Title']);\n  const company = normalize(row['Company Name']);\n  if (title && company) {\n    seenKeys.add(`${title}|${company}`);\n    seenNormTitles.push({ title: normalizeTitle(row['Job Title']), company });\n  }\n}\n\nlet dupeCount = 0;\nconst filtered = newJobs.filter(item => {\n  const job = item.json;\n  const link = (job.link || '').trim();\n  const cleanLink = link.split('?')[0];\n  const title = normalize(job.title);\n  const company = normalize(job.company);\n  const normTitle = normalizeTitle(job.title);\n  if (link && seenUrls.has(link)) { dupeCount++; return false; }\n  if (cleanLink && seenUrls.has(cleanLink)) { dupeCount++; return false; }\n  if (title && company && seenKeys.has(`${title}|${company}`)) { dupeCount++; return false; }\n  for (const seen of seenNormTitles) {\n    if (seen.company === company && wordSimilarity(normTitle, seen.title) >= 0.8) {\n      dupeCount++;\n      return false;\n    }\n  }\n  return true;\n});\n\nconsole.log(`FINAL DEDUPE CHECK (before append): Filtered ${dupeCount} last-minute dupes, ${filtered.length} jobs remain`);\nreturn filtered;\n"
+      },
+      "id": "abe02ec9-78d6-44e5-8bcd-756d221bbd3f",
+      "name": "Final Dedup Check (Before Append)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -816,
+        1200
+      ]
+    }
+  ],
+  "connections": {
+    "Fetch RemoteOK Jobs": {
+      "main": [
+        [
+          {
+            "node": "Filter Relevant Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Relevant Jobs": {
+      "main": [
+        [
+          {
+            "node": "Combine Remote Jobs with Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Job Listings": {
+      "main": [
+        [
+          {
+            "node": "Filter Google Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Google Jobs": {
+      "main": [
+        [
+          {
+            "node": "Combine Google Jobs with Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Remote Jobs with Resume": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Google Jobs with Resume": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Set Location and Position Parameters": {
+      "main": [
+        [
+          {
+            "node": "Separate Out Titles and Locations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Normalize Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Adzuna Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate Jobs Before AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "Batch Feed AI Grader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Feed AI Grader": {
+      "main": [
+        [
+          {
+            "node": "JSON Parser",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip If Empty Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove titles": {
+      "main": [
+        [
+          {
+            "node": "Smart Scorer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Fields": {
+      "main": [
+        [
+          {
+            "node": "Combine Adzuna with Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Salary": {
+      "main": [
+        [
+          {
+            "node": "Remove titles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smart Scorer": {
+      "main": [
+        [
+          {
+            "node": "Score Router",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Refresh Seen Jobs (Sheet1)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Refresh Seen Jobs (Sheet2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Google Jobs": {
+      "main": [
+        [
+          {
+            "node": "Split Job Listings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Jooble Jobs": {
+      "main": [
+        [
+          {
+            "node": "Normalize the Jooble Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize the Jooble Data": {
+      "main": [
+        [
+          {
+            "node": "Combine Jooble Jobs with Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Jooble Jobs with Resume": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Combine Adzuna with Resume": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Normalize Fields2": {
+      "main": [
+        [
+          {
+            "node": "Combine Indeed with Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Indeed with Resume": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Fetch Adzuna Jobs": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adzuna Loop": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Adzuna Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize LinkedIn Data": {
+      "main": [
+        [
+          {
+            "node": "Combine LinkedIn with Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine LinkedIn with Resume": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "Job Search Webhook": {
+      "main": [
+        [
+          {
+            "node": "Log Run Started",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model (Evaluator)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Job Application Email Writer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Run Results": {
+      "main": [
+        [
+          {
+            "node": "Log Run Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Job Results": {
+      "main": [
+        [
+          {
+            "node": "Read Run Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Run Status": {
+      "main": [
+        [
+          {
+            "node": "Build Poll Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Poll Response": {
+      "main": [
+        [
+          {
+            "node": "Respond With Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separate Out Titles and Locations": {
+      "main": [
+        [
+          {
+            "node": "Adzuna Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Google Jobs Location": {
+      "main": [
+        [
+          {
+            "node": "Fetch Google Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Indeed Jobs (Apify)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch LinkedIn Jobs (Apify Native)": {
+      "main": [
+        [
+          {
+            "node": "Normalize LinkedIn Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Router": {
+      "main": [
+        [
+          {
+            "node": "Final Dedup Check (Before AI)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final Dedup Check (Before Append)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip If Empty Batch": {
+      "main": [
+        [
+          {
+            "node": "Job Application Email Writer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Application Email Writer": {
+      "main": [
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON Parser": {
+      "main": [
+        [
+          {
+            "node": "Create Gmail Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Gmail Draft": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Declined Jobs": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Summarize Run Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Fetch RemoteOK Jobs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Set Location and Position Parameters",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Jooble Jobs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Resolve Google Jobs Location",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Indeed Jobs (Apify)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch LinkedIn Jobs (Apify Native)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Dedup Check (Before AI)": {
+      "main": [
+        [
+          {
+            "node": "Batch Feed AI Grader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Dedup Check (Before Append)": {
+      "main": [
+        [
+          {
+            "node": "Append Declined Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate Jobs Before AI": {
+      "main": [
+        [
+          {
+            "node": "Normalize Salary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "1eb11f77-09f5-4bb5-8a8a-4e97bccbec32",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6f1625073e00a9d10fbdf0ad8be4ebd48cece80c66cf9acc9b41769c0461c4a0"
+  },
+  "id": "gOewaRo7mWdtX9R65tT-S",
+  "tags": []
+}

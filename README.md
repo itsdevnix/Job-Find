@@ -34,7 +34,7 @@ Score Router  (score >= 0 ?)
    pass                            fail
       │                              │
       ▼                              ▼
-Job Application Email Writer   Append to "Declined" sheet tab
+Job Application Email Writer   Append to "Sheet2" (declined jobs)
 (OpenAI gpt-4o-mini drafts
  a tailored subject + body)
       │
@@ -56,7 +56,7 @@ Meanwhile the frontend polls `GET /webhook/job-results?runId=...` every few seco
 | Frontend | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4 |
 | Workflow engine | n8n (self-hosted) |
 | AI | OpenAI `gpt-4o-mini` (job-fit scoring assist / email drafting) |
-| Storage | Google Sheets (3 tabs: `Sheet1`, `Declined`, `Runs`) |
+| Storage | Google Sheets (3 tabs: `Sheet1`, `Sheet2`, `Job Process`) |
 | Email | Gmail (drafts only) |
 | Job data | RemoteOK, Adzuna, SerpApi (Google Jobs), Jooble, Apify (Indeed + LinkedIn) |
 
@@ -70,22 +70,13 @@ Everything below is collected in one copy-paste template at [`workflow/API_KEYS.
 
 ### 1. Environment variables — set on the n8n instance
 
-Referenced in node expressions as `{{ $env.VAR_NAME }}`, so raw values never appear in the workflow JSON.
+Only one node reads from `{{ $env.VAR_NAME }}` — Adzuna, Apify, and the results spreadsheet ID are all handled by native credentials or per-node config instead (section 2).
 
 | Variable | Used by | Where to get it |
 |---|---|---|
-| `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | `Fetch Adzuna Jobs` | [developer.adzuna.com](https://developer.adzuna.com) |
 | `JOOBLE_API_KEY` | `Fetch Jooble Jobs` | [jooble.org/api/about](https://jooble.org/api/about) |
-| `APIFY_API_TOKEN` | `Apify` (Indeed), `Fetch LinkedIn Jobs (Apify)` | [console.apify.com](https://console.apify.com) |
-| `GOOGLE_SHEETS_ID` | All Sheets nodes (`Read Applied History`, `Google Sheets`, `Log Run Started/Complete`, `Read Run Status`, `Read Run Results`, `Append Declined Jobs`) | The spreadsheet ID from your results sheet's URL |
 
 `Fetch RemoteOK Jobs` needs no key — it's a free public feed.
-
-**Getting `ADZUNA_APP_ID` / `ADZUNA_APP_KEY`, step by step:**
-1. Go to [developer.adzuna.com](https://developer.adzuna.com) and click **Register**.
-2. Sign up with your email and verify it.
-3. Once logged in, your **App ID** and **App Key** are shown on the dashboard (also emailed to you).
-4. Set both as `ADZUNA_APP_ID` and `ADZUNA_APP_KEY` on the n8n instance.
 
 **Getting `JOOBLE_API_KEY`, step by step:**
 1. Go to [jooble.org/api/about](https://jooble.org/api/about).
@@ -93,25 +84,20 @@ Referenced in node expressions as `{{ $env.VAR_NAME }}`, so raw values never app
 3. Jooble emails you an API key (format: a UUID, e.g. `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`).
 4. Set it as `JOOBLE_API_KEY` on the n8n instance. It's consumed as part of the request URL (`https://jooble.org/api/{{ $env.JOOBLE_API_KEY }}`) — never paste the raw key into the node itself.
 
-**Getting `APIFY_API_TOKEN`, step by step:**
-1. Sign in (or sign up) at [console.apify.com](https://console.apify.com).
-2. Go to **Settings → Integrations**.
-3. Copy your **API token**.
-4. Set it as `APIFY_API_TOKEN` on the n8n instance. See [Apify actors used](#apify-actors-used) below for how both scrapers share this one token.
-
-**Getting `GOOGLE_SHEETS_ID`, step by step:**
-1. Create a new Google Sheet (or reuse one) that will hold results — this becomes your results spreadsheet.
-2. Open it and copy the ID out of the URL: `https://docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`.
-3. Set it as `GOOGLE_SHEETS_ID` on the n8n instance.
-4. Create the 3 required tabs in that same sheet — see step 4 of [Setup — step by step](#setup--step-by-step) below, or `workflow/SETUP.md` section 2 for the exact column layout.
+**Setting up the results spreadsheet:**
+1. Create a new Google Sheet (or reuse one) that will hold results.
+2. Create the 3 required tabs in it — see step 4 of [Setup — step by step](#setup--step-by-step) below, or `workflow/SETUP.md` section 2 for the exact column layout.
+3. Unlike the variable above, the spreadsheet ID is **not** an env var — it's entered directly in the `documentId` field of each of the 7 Google Sheets nodes listed in the credentials table below. Pick the sheet from the node's document picker (or paste the ID) in each one.
 
 ### 2. Native n8n credentials — created via the n8n UI (not env vars)
 
 | Credential | Type | Attach to |
 |---|---|---|
-| Google Sheets | OAuth2 | all Sheets nodes above |
+| Google Sheets | OAuth2 | `Google Sheets`, `Log Run Started`, `Log Run Complete`, `Read Run Status`, `Append Declined Jobs`, `Refresh Seen Jobs (Sheet1)`, `Refresh Seen Jobs (Sheet2)` |
 | OpenAI | API key | `OpenAI Chat Model (Evaluator)` |
 | SerpApi Query Auth | Query Auth (generic credential, param `api_key`) | `Fetch Google Jobs` |
+| Adzuna Custom Auth | Custom Auth (generic credential, qs `app_id` + `app_key`) | `Fetch Adzuna Jobs` |
+| Apify | API token | `Fetch Indeed Jobs (Apify)`, `Fetch LinkedIn Jobs (Apify Native)` (same token, two actors) |
 | Gmail | OAuth2 | `Create Gmail Draft` |
 
 **Setting up the Google Sheets credential, step by step:**
@@ -131,7 +117,22 @@ Referenced in node expressions as `{{ $env.VAR_NAME }}`, so raw values never app
 2. In n8n: **Credentials → New → Query Auth**.
 3. Name: `SerpApi Query Auth`. Parameter Name: `api_key`. Value: your SerpApi key.
 4. Save, then open `Fetch Google Jobs` and set **Authentication** → Generic Credential Type → Query Auth → `SerpApi Query Auth`.
-5. This is a **Query Auth credential, not a `$env` variable**, because SerpApi only accepts the key as a query param (no header support) — see `workflow/SETUP.md` for why that specifically rules out `$env`.
+5. This is a **Query Auth credential, not a `$env` variable**, because SerpApi only accepts the key as a query param (no header support).
+
+**Setting up the Adzuna Custom Auth credential, step by step:**
+1. Go to [developer.adzuna.com](https://developer.adzuna.com), click **Register**, sign up, and verify your email.
+2. Once logged in, your **App ID** and **App Key** are shown on the dashboard (also emailed to you).
+3. In n8n: **Credentials → New → Custom Auth**. Name: `Adzuna Custom Auth`. JSON definition:
+   ```json
+   { "qs": { "app_id": "your_adzuna_app_id", "app_key": "your_adzuna_app_key" } }
+   ```
+4. Save, then open `Fetch Adzuna Jobs` and set **Authentication** → Generic Credential Type → Custom Auth → `Adzuna Custom Auth`.
+
+**Setting up the Apify credential, step by step:**
+1. Sign in (or sign up) at [console.apify.com](https://console.apify.com).
+2. Go to **Settings → Integrations** and copy your **API token**.
+3. In n8n: **Credentials → New → Apify API**, paste the token, save.
+4. Attach it to both `Fetch Indeed Jobs (Apify)` and `Fetch LinkedIn Jobs (Apify Native)` — same token, two actors (`misceres/indeed-scraper` and `practicaltools/linkedin-jobs`).
 
 **Setting up the Gmail OAuth2 credential, step by step:**
 1. In n8n: **Credentials → New → Gmail OAuth2 API**.
@@ -154,38 +155,26 @@ Both are server-only (no `NEXT_PUBLIC_` prefix) — the browser never sees the w
 
 ## Apify actors used
 
-Two of the six job sources are scraped via Apify. There's no dedicated Apify node in this n8n install — both actors are called directly through n8n `httpRequest` nodes hitting Apify's REST API:
-
-```
-POST https://api.apify.com/v2/acts/<actor-id>/run-sync-get-dataset-items?token=<APIFY_API_TOKEN>
-```
+Two of the six job sources are scraped via Apify's native n8n node (`@apify/n8n-nodes-apify.apify`), authenticated with the `Apify` credential set up above:
 
 | Actor ID | Scrapes | n8n node |
 |---|---|---|
-| `misceres~indeed-scraper` | Indeed | `Apify` |
-| `practicaltools~linkedin-jobs` | LinkedIn | `Fetch LinkedIn Jobs (Apify)` |
+| `misceres/indeed-scraper` | Indeed | `Fetch Indeed Jobs (Apify)` |
+| `practicaltools/linkedin-jobs` | LinkedIn | `Fetch LinkedIn Jobs (Apify Native)` |
 
-Both actors share a single token — no per-actor auth needed.
-
-**Getting the token, step by step:**
-1. Sign in (or sign up) at [console.apify.com](https://console.apify.com).
-2. Go to **Settings → Integrations**.
-3. Copy your **API token**.
-4. Set it as the `APIFY_API_TOKEN` environment variable on the n8n instance.
-
-That's it — n8n calls both actors with the same token; you don't need to configure the actors themselves in the Apify console.
+Both nodes share the same credential — no per-actor auth needed, and no manual configuration in the Apify console beyond having the token.
 
 ---
 
 ## Setup — step by step
 
 1. **Collect API keys.** Get every key from the [API keys section](#api-keys--credentials-needed) above and fill in the real values in your own copy of `workflow/API_KEYS.env.example` (that file in this repo is a scrubbed template — do not commit real values into it).
-2. **Set the 5 n8n-side environment variables** on the n8n instance (self-hosted `.env`, or your host's environment variable settings).
-3. **Create the 4 native n8n credentials** (Google Sheets, OpenAI, SerpApi Query Auth, Gmail) via the n8n UI and attach each to its listed nodes — see `workflow/SETUP.md` section 2 for exact steps, including the SerpApi Query Auth setup (SerpApi only accepts the key as a query param, not a header).
-4. **Set up the Google Sheet.** Same spreadsheet (`GOOGLE_SHEETS_ID`) needs 3 tabs:
+2. **Set the 1 n8n-side environment variable** (`JOOBLE_API_KEY`) on the n8n instance (self-hosted `.env`, or your host's environment variable settings).
+3. **Create the 6 native n8n credentials** (Google Sheets, OpenAI, SerpApi Query Auth, Adzuna Custom Auth, Apify, Gmail) via the n8n UI and attach each to its listed nodes — see `workflow/SETUP.md` section 2 for exact steps.
+4. **Set up the Google Sheet.** The same spreadsheet (its ID entered directly into each Google Sheets node) needs 3 tabs:
    - `Sheet1` — jobs that passed scoring and got a drafted application email
-   - `Declined` — jobs that didn't clear the score threshold
-   - `Runs` — run-status tracking for the poll endpoint
+   - `Sheet2` — jobs that didn't clear the score threshold
+   - `Job Process` — run-status tracking for the poll endpoint
    Column layouts are in `workflow/SETUP.md` section 2.
 5. **Activate the `Job-Find` workflow** in n8n.
 6. **Configure the frontend:**
@@ -203,7 +192,7 @@ That's it — n8n calls both actors with the same token; you don't need to confi
    ```
    Then poll `GET /webhook/job-results?runId=test-1` until `status` is `"complete"`.
 
-For full setup detail beyond this summary, see [`workflow/SETUP.md`](workflow/SETUP.md). For a rollback reference to the pre-webhook version of the workflow, see [`workflow/job-find-backup.json`](workflow/job-find-backup.json).
+For full setup detail beyond this summary, see [`workflow/SETUP.md`](workflow/SETUP.md).
 
 ---
 
@@ -233,7 +222,7 @@ Responds immediately; the pipeline runs in the background (expect several minute
 }
 ```
 
-No per-job data is returned directly — `highScoreSheetUrl` / `lowScoreSheetUrl` link to the `Sheet1` and `Declined` tabs of the results spreadsheet, and are `null` until the run completes.
+No per-job data is returned directly — `highScoreSheetUrl` / `lowScoreSheetUrl` link to the `Sheet1` and `Sheet2` tabs of the results spreadsheet, and are `null` until the run completes.
 
 ---
 

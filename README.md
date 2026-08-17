@@ -3,7 +3,7 @@
 An automated job search assistant. You give it a job title, a location, and your resume (PDF) through a simple web form; it searches **6 job boards**, scores every result against your resume, and for jobs that pass the bar it drafts a tailored application email in Gmail (as a **draft only — it never sends anything automatically**) and logs every result to a Google Sheet for you to review.
 
 It's built from two parts:
-- an **n8n workflow** (`Job-Find`, workflow id `gOewaRo7mWdtX9R65tT-S`) that does the searching, scoring, and drafting
+- an **n8n workflow** (import [`Job-Find.json`](Job-Find.json)) that does the searching, scoring, and drafting
 - a **Next.js frontend** that gives you a form to submit a search and a page to watch results come in
 
 ---
@@ -66,18 +66,44 @@ Meanwhile the frontend polls `GET /webhook/job-results?runId=...` every few seco
 
 Everything below is collected in one copy-paste template at [`workflow/API_KEYS.env.example`](workflow/API_KEYS.env.example) — copy each value to its real destination (see [`workflow/SETUP.md`](workflow/SETUP.md) for full detail).
 
+⚠️ **Never paste real key values into the workflow JSON or commit them to git.** Every key below goes either into an n8n environment variable (referenced as `{{ $env.VAR_NAME }}`) or a native n8n credential (attached via the n8n UI, never stored in the exported JSON) — that's what keeps `Job-Find.json` safe to share/export.
+
 ### 1. Environment variables — set on the n8n instance
 
 Referenced in node expressions as `{{ $env.VAR_NAME }}`, so raw values never appear in the workflow JSON.
 
 | Variable | Used by | Where to get it |
 |---|---|---|
-| `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | `Fetch Adzuna Jobs` | [developer.adzuna.com](https://developer.adzuna.com) — free account, app ID + key |
+| `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | `Fetch Adzuna Jobs` | [developer.adzuna.com](https://developer.adzuna.com) |
 | `JOOBLE_API_KEY` | `Fetch Jooble Jobs` | [jooble.org/api/about](https://jooble.org/api/about) |
-| `APIFY_API_TOKEN` | `Apify` (Indeed), `Fetch LinkedIn Jobs (Apify)` | [console.apify.com](https://console.apify.com) — see [Apify setup](#apify-actors-used) below |
+| `APIFY_API_TOKEN` | `Apify` (Indeed), `Fetch LinkedIn Jobs (Apify)` | [console.apify.com](https://console.apify.com) |
 | `GOOGLE_SHEETS_ID` | All Sheets nodes (`Read Applied History`, `Google Sheets`, `Log Run Started/Complete`, `Read Run Status`, `Read Run Results`, `Append Declined Jobs`) | The spreadsheet ID from your results sheet's URL |
 
 `Fetch RemoteOK Jobs` needs no key — it's a free public feed.
+
+**Getting `ADZUNA_APP_ID` / `ADZUNA_APP_KEY`, step by step:**
+1. Go to [developer.adzuna.com](https://developer.adzuna.com) and click **Register**.
+2. Sign up with your email and verify it.
+3. Once logged in, your **App ID** and **App Key** are shown on the dashboard (also emailed to you).
+4. Set both as `ADZUNA_APP_ID` and `ADZUNA_APP_KEY` on the n8n instance.
+
+**Getting `JOOBLE_API_KEY`, step by step:**
+1. Go to [jooble.org/api/about](https://jooble.org/api/about).
+2. Fill in the request form (name, email, site/project description) and submit.
+3. Jooble emails you an API key (format: a UUID, e.g. `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`).
+4. Set it as `JOOBLE_API_KEY` on the n8n instance. It's consumed as part of the request URL (`https://jooble.org/api/{{ $env.JOOBLE_API_KEY }}`) — never paste the raw key into the node itself.
+
+**Getting `APIFY_API_TOKEN`, step by step:**
+1. Sign in (or sign up) at [console.apify.com](https://console.apify.com).
+2. Go to **Settings → Integrations**.
+3. Copy your **API token**.
+4. Set it as `APIFY_API_TOKEN` on the n8n instance. See [Apify actors used](#apify-actors-used) below for how both scrapers share this one token.
+
+**Getting `GOOGLE_SHEETS_ID`, step by step:**
+1. Create a new Google Sheet (or reuse one) that will hold results — this becomes your results spreadsheet.
+2. Open it and copy the ID out of the URL: `https://docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`.
+3. Set it as `GOOGLE_SHEETS_ID` on the n8n instance.
+4. Create the 3 required tabs in that same sheet — see step 4 of [Setup — step by step](#setup--step-by-step) below, or `workflow/SETUP.md` section 2 for the exact column layout.
 
 ### 2. Native n8n credentials — created via the n8n UI (not env vars)
 
@@ -87,6 +113,31 @@ Referenced in node expressions as `{{ $env.VAR_NAME }}`, so raw values never app
 | OpenAI | API key | `OpenAI Chat Model (Evaluator)` |
 | SerpApi Query Auth | Query Auth (generic credential, param `api_key`) | `Fetch Google Jobs` |
 | Gmail | OAuth2 | `Create Gmail Draft` |
+
+**Setting up the Google Sheets credential, step by step:**
+1. In n8n: **Credentials → New → Google Sheets Account**.
+2. Choose **OAuth2**, click **Sign in with Google**, and grant access.
+3. Save, then open each Sheets node listed above and select this credential.
+
+**Getting the OpenAI API key credential, step by step:**
+1. Sign in at [platform.openai.com](https://platform.openai.com).
+2. Go to **API keys** (left sidebar) → **Create new secret key**.
+3. Copy the key immediately — OpenAI only shows it once.
+4. In n8n: **Credentials → New → OpenAI account**, paste the key, save.
+5. Attach it to `OpenAI Chat Model (Evaluator)`.
+
+**Setting up the SerpApi Query Auth credential, step by step:**
+1. Sign up at [serpapi.com](https://serpapi.com) and copy your **API key** from the dashboard.
+2. In n8n: **Credentials → New → Query Auth**.
+3. Name: `SerpApi Query Auth`. Parameter Name: `api_key`. Value: your SerpApi key.
+4. Save, then open `Fetch Google Jobs` and set **Authentication** → Generic Credential Type → Query Auth → `SerpApi Query Auth`.
+5. This is a **Query Auth credential, not a `$env` variable**, because SerpApi only accepts the key as a query param (no header support) — see `workflow/SETUP.md` for why that specifically rules out `$env`.
+
+**Setting up the Gmail OAuth2 credential, step by step:**
+1. In n8n: **Credentials → New → Gmail OAuth2 API**.
+2. Click through Google's consent flow and authorize the account that should hold the drafts.
+3. Save, then open `Create Gmail Draft` and select this credential.
+4. No key to copy — this is an interactive OAuth login, not a static token.
 
 ### 3. Frontend environment variables
 

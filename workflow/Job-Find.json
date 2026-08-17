@@ -468,7 +468,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://jooble.org/api/596fce8c-b263-48a0-8c55-9b8669950a72",
+        "url": "=https://jooble.org/api/{{ $env.JOOBLE_API_KEY }}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ keywords: $('Job Search Webhook').first().json.body.jobTitle, location: $('Job Search Webhook').first().json.body.location, radius: '50', salary: 0 }) }}",
@@ -2204,6 +2204,5 @@
     "templateCredsSetupCompleted": true,
     "instanceId": "REPLACE_WITH_INSTANCE_ID"
   },
-  "id": "gOewaRo7mWdtX9R65tT-S",
   "tags": []
 }

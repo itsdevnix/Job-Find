@@ -108,7 +108,7 @@ Never paste real key values into the workflow JSON or commit them to git — eve
 **Google Sheets**
 1. In n8n: **Credentials → New → Google Sheets Account** → OAuth2 → sign in with Google.
 2. Attach it to the 7 nodes listed in the table above.
-3. Create the results spreadsheet (or reuse one) with its 3 required tabs — see step 4 of [Setup — step by step](#setup--step-by-step) below. Then open each of those 7 nodes and pick that spreadsheet in its document field — the ID isn't a credential, it's set per-node.
+3. Create the results spreadsheet (or reuse one) with its 3 required tabs — see `workflow/SETUP.md` for the exact layout. Then open each of those 7 nodes and pick that spreadsheet in its document field — the ID isn't a credential, it's set per-node.
 
 **Gmail**
 1. In n8n: **Credentials → New → Gmail OAuth2 API** → sign in and authorize the account that should hold the drafts.
@@ -137,75 +137,3 @@ Two of the six job sources are scraped via Apify's native n8n node (`@apify/n8n-
 | `practicaltools/linkedin-jobs` | LinkedIn | `Fetch LinkedIn Jobs (Apify Native)` |
 
 Both nodes share the same credential — no per-actor auth needed, and no manual configuration in the Apify console beyond having the token.
-
----
-
-## Setup — step by step
-
-1. **Collect API keys.** Get every key from the [API keys section](#api-keys--credentials-needed) above and fill in the real values in your own copy of `workflow/API_KEYS.env.example` (that file in this repo is a scrubbed template — do not commit real values into it).
-2. **Set the 1 n8n-side environment variable** (`JOOBLE_API_KEY`) on the n8n instance (self-hosted `.env`, or your host's environment variable settings).
-3. **Create the 6 native n8n credentials** (Google Sheets, OpenAI, SerpApi Query Auth, Adzuna Custom Auth, Apify, Gmail) via the n8n UI and attach each to its listed nodes — see `workflow/SETUP.md` section 2 for exact steps.
-4. **Set up the Google Sheet.** The same spreadsheet (its ID entered directly into each Google Sheets node) needs 3 tabs:
-   - `Sheet1` — jobs that passed scoring and got a drafted application email
-   - `Sheet2` — jobs that didn't clear the score threshold
-   - `Job Process` — run-status tracking for the poll endpoint
-   Column layouts are in `workflow/SETUP.md` section 2.
-5. **Activate the `Job-Find` workflow** in n8n.
-6. **Configure the frontend:**
-   ```bash
-   cd frontend
-   cp .env.local.example .env.local
-   # fill in N8N_JOB_SEARCH_WEBHOOK_URL and N8N_JOB_RESULTS_WEBHOOK_URL
-   npm install
-   npm run dev
-   ```
-7. **Test end-to-end** (see `workflow/SETUP.md` section 4):
-   ```bash
-   curl -F jobTitle="automation manager" -F location="Austin, TX" -F runId="test-1" \
-        -F resume=@resume.pdf https://<your-n8n-instance>/webhook/job-search
-   ```
-   Then poll `GET /webhook/job-results?runId=test-1` until `status` is `"complete"`.
-
-For full setup detail beyond this summary, see [`workflow/SETUP.md`](workflow/SETUP.md).
-
----
-
-## Endpoints
-
-### `POST /webhook/job-search` — start a search
-
-`multipart/form-data` body (not JSON — needed to carry the resume file):
-
-| Field | Type | Notes |
-|---|---|---|
-| `jobTitle` | text | e.g. `"automation manager"` |
-| `location` | text | e.g. `"Austin, TX"` or `"Remote"` |
-| `runId` | text | caller-generated (e.g. `crypto.randomUUID()`) — used to poll for results |
-| `resume` | file | PDF. The multipart field name must be exactly `resume`. |
-
-Responds immediately; the pipeline runs in the background (expect several minutes, since it queries 6 job boards and grades each surviving job with a delay between AI calls).
-
-### `GET /webhook/job-results?runId=<uuid>` — poll for results
-
-```json
-{
-  "status": "running" | "complete" | "not_found",
-  "resultsCount": 0,
-  "highScoreSheetUrl": "https://docs.google.com/spreadsheets/d/<id>/edit#gid=0",
-  "lowScoreSheetUrl": "https://docs.google.com/spreadsheets/d/<id>/edit#gid=1007147172"
-}
-```
-
-No per-job data is returned directly — `highScoreSheetUrl` / `lowScoreSheetUrl` link to the `Sheet1` and `Sheet2` tabs of the results spreadsheet, and are `null` until the run completes.
-
----
-
-## Known limitation
-
-`Smart Scorer`'s keyword dictionaries are currently tuned for automation/ops/AI-type roles and don't automatically adapt to whatever `jobTitle` is searched. Its generic parts (negative-title rejection, hourly-pay rejection, seniority modifiers) apply to any search, but scoring for very different job titles may need retuning.
-
----
-
-## A note on emails
-
-The workflow **only ever creates Gmail drafts** with the "To" field left blank — it never sends an email on your behalf. Review and send each draft yourself.
